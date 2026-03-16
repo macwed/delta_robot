@@ -17,6 +17,8 @@ constexpr int32_t MICROSTEPS_PER_STEP  = 8;
 constexpr int32_t STEPS_PER_REVOLUTION = 200;
 constexpr int32_t STEPS_PER_RAD = STEPS_PER_REVOLUTION * MICROSTEPS_PER_STEP / (2.f * M_PI);
 
+extern const DeltaConfig DELTA;
+
 float calc_arm_angle(const DeltaConfig& cfg,
                      float x, float y, float z,
                      int arm_index);

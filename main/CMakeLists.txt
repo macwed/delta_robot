@@ -3,5 +3,6 @@ idf_component_register(
         "main.cpp"
         "motor.cpp"
         "delta_ik.cpp"
+        "coordinator.cpp"
         INCLUDE_DIRS "."
 )

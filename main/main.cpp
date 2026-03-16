@@ -1,3 +1,4 @@
+#include "coordinator.hpp"
 #include "motor.hpp"
 #include "delta_ik.hpp"
 
@@ -27,6 +28,10 @@ extern "C" void app_main(void)
         return;
     } else
     {
+        for (int i = 0; i < NUM_MOTORS; i++)
+            motor_queue[i] = xQueueCreate(1, sizeof(MotorTarget));
+
+        xTaskCreate(coordinator_task, "coordinator", 2048, NULL, 2, NULL);
         xTaskCreate(motor_task, "motor1", 2048, &motor_id[0], 1, NULL);
         xTaskCreate(motor_task, "motor2", 2048, &motor_id[1], 1, NULL);
         xTaskCreate(motor_task, "motor3", 2048, &motor_id[2], 1, NULL);

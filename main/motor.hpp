@@ -23,6 +23,8 @@
 
 constexpr float HOME_ANGLE_DEG = -44.5f;
 constexpr float HOME_ANGLE_RAD = HOME_ANGLE_DEG * DEG_TO_RAD;
+constexpr int32_t microsteps_per_step = 8;
+constexpr int32_t steps_per_revolution = 200;
 
 struct MotorTarget {
     float angle_rad;
