@@ -13,7 +13,7 @@ struct DeltaConfig {
 };
 
 constexpr float DEG_TO_RAD = M_PI / 180.0f;
-constexpr int32_t MICROSTEPS_PER_STEP  = 8;
+constexpr int32_t MICROSTEPS_PER_STEP  = 16;
 constexpr int32_t STEPS_PER_REVOLUTION = 200;
 constexpr int32_t STEPS_PER_RAD = STEPS_PER_REVOLUTION * MICROSTEPS_PER_STEP / (2.f * M_PI);
 

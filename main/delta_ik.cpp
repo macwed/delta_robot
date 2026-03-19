@@ -52,5 +52,5 @@ bool delta_ik(const DeltaConfig& cfg, float x, float y, float z, float angles[3]
 
 int32_t angle_to_steps(float angle_rad)
 {
-    return (int32_t)(angle_rad * STEPS_PER_RAD);
+    return lroundf(angle_rad * STEPS_PER_RAD);
 }
