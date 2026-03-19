@@ -1,7 +1,3 @@
-//
-// Created by maciej on 15.03.2026.
-//
-
 #include "delta_ik.hpp"
 
 #include <cmath>
@@ -9,14 +5,21 @@
 
 #include "esp_log.h"
 
-static const char* TAG = "delta_ik";
+constexpr char kTag[] = "delta_ik";
+
+const DeltaConfig kDeltaConfig = {
+    .r_base = 49.63f,
+    .r_effector = 120.51f,
+    .L1 = 110.95f,
+    .L2 = 164.76f,
+};
 
 float calc_arm_angle(const DeltaConfig& cfg,
                      float x, float y, float z,
                      int arm_index)
 {
-    float angle_i = (float)arm_index * 120.f * DEG_TO_RAD;
-    float x_proj = cos(angle_i) * x + sin(angle_i) * y; //rzut punktu na płaszczyznę ramienia
+    float angle_i = static_cast<float>(arm_index) * 120.f * DEG_TO_RAD;
+    float x_proj = cos(angle_i) * x + sin(angle_i) * y;
 
     float E_x = x_proj - (cfg.r_base - cfg.r_effector);
     float E_y = z;
@@ -43,7 +46,7 @@ bool delta_ik(const DeltaConfig& cfg, float x, float y, float z, float angles[3]
         angles[i] = calc_arm_angle(cfg, x, y, z, i);
         if (std::isnan(angles[i]))
         {
-            ESP_LOGE(TAG, "Angle out of range for arm %d", i);
+            ESP_LOGE(kTag, "Angle out of range for arm %d", i);
             return false;
         }
     }

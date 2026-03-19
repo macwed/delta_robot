@@ -1,7 +1,3 @@
-//
-// Created by maciej on 16.03.2026.
-//
-
 #include "coordinator.hpp"
 
 #include <cmath>
@@ -12,13 +8,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "motor.hpp"
-
-const DeltaConfig DELTA = {
-    .r_base     = 49.63f,
-    .r_effector = 120.51f,
-    .L1         = 110.95f,
-    .L2         = 164.76f
-};
 
 namespace {
 struct CoordinatorControl {
@@ -60,7 +49,7 @@ CoordinatorControl snapshot_control()
 
 bool validate_xyz(float x, float y, float z, float angles[NUM_MOTORS])
 {
-    return delta_ik(DELTA, x, y, z, angles);
+    return delta_ik(kDeltaConfig, x, y, z, angles);
 }
 
 void print_help()
@@ -176,10 +165,10 @@ void coordinator_task(void *p)
             }
 
             ok = high_pose
-                 ? delta_ik(DELTA, 20, 0, 210.f, angles)
-                 : delta_ik(DELTA, 0, 0, 140.f, angles);
+                 ? delta_ik(kDeltaConfig, 20, 0, 210.f, angles)
+                 : delta_ik(kDeltaConfig, 0, 0, 140.f, angles);
         } else {
-            ok = delta_ik(DELTA,
+            ok = delta_ik(kDeltaConfig,
                           control.manual_xyz[0],
                           control.manual_xyz[1],
                           control.manual_xyz[2],

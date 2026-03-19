@@ -1,31 +1,29 @@
 #pragma once
+
 #include <cstdint>
 
 #include "delta_ik.hpp"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 
-#define MOTOR1_EN   GPIO_NUM_6
-#define MOTOR1_STEP GPIO_NUM_15
-#define MOTOR1_DIR  GPIO_NUM_7
-#define MOTOR2_EN   GPIO_NUM_5
-#define MOTOR2_STEP GPIO_NUM_21
-#define MOTOR2_DIR  GPIO_NUM_47
-#define MOTOR3_EN   GPIO_NUM_12
-#define MOTOR3_STEP GPIO_NUM_10
-#define MOTOR3_DIR  GPIO_NUM_11
+constexpr gpio_num_t MOTOR1_EN = GPIO_NUM_6;
+constexpr gpio_num_t MOTOR1_STEP = GPIO_NUM_15;
+constexpr gpio_num_t MOTOR1_DIR = GPIO_NUM_7;
+constexpr gpio_num_t MOTOR2_EN = GPIO_NUM_5;
+constexpr gpio_num_t MOTOR2_STEP = GPIO_NUM_21;
+constexpr gpio_num_t MOTOR2_DIR = GPIO_NUM_47;
+constexpr gpio_num_t MOTOR3_EN = GPIO_NUM_12;
+constexpr gpio_num_t MOTOR3_STEP = GPIO_NUM_10;
+constexpr gpio_num_t MOTOR3_DIR = GPIO_NUM_11;
 
-#define MOTOR1_MS1  GPIO_NUM_9
-#define MOTOR1_MS2  GPIO_NUM_3
+constexpr gpio_num_t MOTOR1_MS1 = GPIO_NUM_9;
+constexpr gpio_num_t MOTOR1_MS2 = GPIO_NUM_3;
+constexpr gpio_num_t MOTOR2_MS1 = GPIO_NUM_2;
+constexpr gpio_num_t MOTOR2_MS2 = GPIO_NUM_1;
+constexpr gpio_num_t MOTOR3_MS1 = GPIO_NUM_41;
+constexpr gpio_num_t MOTOR3_MS2 = GPIO_NUM_42;
 
-#define MOTOR2_MS1  GPIO_NUM_2
-#define MOTOR2_MS2  GPIO_NUM_1
-
-#define MOTOR3_MS1  GPIO_NUM_41
-#define MOTOR3_MS2  GPIO_NUM_42
-
-
-#define NUM_MOTORS 3
+constexpr int NUM_MOTORS = 3;
 
 constexpr float HOME_ANGLE_DEG = -44.5f;
 constexpr float HOME_ANGLE_RAD = HOME_ANGLE_DEG * DEG_TO_RAD;

@@ -1,7 +1,3 @@
-//
-// Created by maciej on 13.03.2026.
-//
-
 #include "motor.hpp"
 
 #include <algorithm>

@@ -1,7 +1,3 @@
-//
-// Created by maciej on 15.03.2026.
-//
-
 #pragma once
 #include <cmath>
 
@@ -17,7 +13,7 @@ constexpr int32_t MICROSTEPS_PER_STEP  = 16;
 constexpr int32_t STEPS_PER_REVOLUTION = 200;
 constexpr int32_t STEPS_PER_RAD = STEPS_PER_REVOLUTION * MICROSTEPS_PER_STEP / (2.f * M_PI);
 
-extern const DeltaConfig DELTA;
+extern const DeltaConfig kDeltaConfig;
 
 float calc_arm_angle(const DeltaConfig& cfg,
                      float x, float y, float z,

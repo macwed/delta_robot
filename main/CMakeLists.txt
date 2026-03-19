@@ -1,10 +1,14 @@
 idf_component_register(
-        SRCS
+    SRCS
         "main.cpp"
         "motor.cpp"
         "delta_ik.cpp"
         "coordinator.cpp"
-        REQUIRES esp_driver_gptimer esp_driver_gpio
-        PRIV_REQUIRES hal
-        INCLUDE_DIRS "."
+    REQUIRES
+        esp_driver_gptimer
+        esp_driver_gpio
+    PRIV_REQUIRES
+        hal
+    INCLUDE_DIRS
+        "."
 )
