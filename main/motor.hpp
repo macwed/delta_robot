@@ -48,17 +48,17 @@ constexpr uint32_t MOTION_TICK_US = 50;
 constexpr uint32_t STEP_PULSE_HIGH_TICKS =
         (STEP_PULSE_HIGH_US + MOTION_TICK_US - 1) / MOTION_TICK_US;
 constexpr uint32_t DIR_SETUP_US = 50;
-constexpr int32_t STEP_RAMP_COUNT = 48;
+constexpr int32_t STEP_RAMP_COUNT = 72;
 constexpr int32_t HOME_RESEAT_STEPS = 32;
 constexpr uint32_t HOME_RESEAT_DELAY_US = 15000;
 constexpr int32_t FINE_MOVE_MAX_STEPS = 24;
-constexpr uint32_t FINE_MOVE_DELAY_US = 2200;
-constexpr uint32_t FINE_MOVE_START_DELAY_US = 3500;
+constexpr uint32_t FINE_MOVE_DELAY_US = 1800;
+constexpr uint32_t FINE_MOVE_START_DELAY_US = 2800;
 constexpr int32_t MEDIUM_MOVE_MAX_STEPS = 96;
-constexpr uint32_t MEDIUM_MOVE_DELAY_US = 3500;
-constexpr uint32_t MEDIUM_MOVE_START_DELAY_US = 7000;
-constexpr uint32_t LARGE_MOVE_DELAY_US = 6000;
-constexpr uint32_t LARGE_MOVE_START_DELAY_US = 12000;
+constexpr uint32_t MEDIUM_MOVE_DELAY_US = 3000;
+constexpr uint32_t MEDIUM_MOVE_START_DELAY_US = 5600;
+constexpr uint32_t LARGE_MOVE_DELAY_US = 5200;
+constexpr uint32_t LARGE_MOVE_START_DELAY_US = 9800;
 constexpr TickType_t COORDINATOR_PERIOD_TICKS = pdMS_TO_TICKS(10);
 
 void motor_configure_microstep_pins();

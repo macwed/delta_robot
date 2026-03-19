@@ -74,30 +74,52 @@ uint32_t wait_counter_from_ticks(uint32_t delay_ticks)
     return delay_ticks > 0 ? delay_ticks - 1 : 0;
 }
 
+uint32_t smoothstep_q16(uint32_t numerator, uint32_t denominator)
+{
+    if (denominator == 0) {
+        return 65536U;
+    }
+
+    const uint32_t u = numerator >= denominator
+                       ? 65536U
+                       : static_cast<uint32_t>((static_cast<uint64_t>(numerator) << 16) / denominator);
+    const uint64_t u2 = (static_cast<uint64_t>(u) * u) >> 16;
+    const uint64_t u3 = (u2 * u) >> 16;
+    const uint64_t eased = 3 * u2 - 2 * u3;
+    return static_cast<uint32_t>(std::min<uint64_t>(eased, 65536U));
+}
+
+uint32_t interpolate_delay(uint32_t start_delay_ticks, uint32_t cruise_delay_ticks, uint32_t ease_q16)
+{
+    if (start_delay_ticks <= cruise_delay_ticks) {
+        return cruise_delay_ticks;
+    }
+
+    const uint32_t delta = start_delay_ticks - cruise_delay_ticks;
+    return start_delay_ticks - static_cast<uint32_t>((static_cast<uint64_t>(delta) * ease_q16) >> 16);
+}
+
 float steps_to_angle_rad(int32_t steps_from_home)
 {
     return HOME_ANGLE_RAD + static_cast<float>(steps_from_home) / static_cast<float>(STEPS_PER_RAD);
 }
 
-uint32_t step_delay_for_index(int32_t step_index, int32_t total_steps,
+uint32_t step_delay_for_index(int32_t completed_steps, int32_t total_steps,
                               uint32_t start_delay_ticks, uint32_t cruise_delay_ticks)
 {
-    if (total_steps <= 2 * STEP_RAMP_COUNT) {
+    if (total_steps <= 1) {
+        return start_delay_ticks;
+    }
+
+    const int32_t ramp_steps = std::max<int32_t>(1, std::min<int32_t>(STEP_RAMP_COUNT, total_steps / 2));
+    const int32_t phase_steps = std::min(completed_steps, total_steps - completed_steps);
+    if (phase_steps >= ramp_steps) {
         return cruise_delay_ticks;
     }
 
-    if (step_index < STEP_RAMP_COUNT) {
-        return start_delay_ticks -
-               ((start_delay_ticks - cruise_delay_ticks) * step_index) / STEP_RAMP_COUNT;
-    }
-
-    if (step_index >= total_steps - STEP_RAMP_COUNT) {
-        const int32_t ramp_down_index = total_steps - step_index - 1;
-        return start_delay_ticks -
-               ((start_delay_ticks - cruise_delay_ticks) * ramp_down_index) / STEP_RAMP_COUNT;
-    }
-
-    return cruise_delay_ticks;
+    return interpolate_delay(start_delay_ticks, cruise_delay_ticks,
+                             smoothstep_q16(static_cast<uint32_t>(phase_steps),
+                                            static_cast<uint32_t>(ramp_steps)));
 }
 
 void pulse_step_pins_blocking(const bool step_mask[NUM_MOTORS], uint32_t delay_us)
@@ -214,7 +236,7 @@ bool build_motion_plan(const int32_t current_steps[NUM_MOTORS],
     plan->max_steps = max_steps;
     plan->start_delay_ticks = us_to_ticks_ceil(start_delay_us);
     plan->cruise_delay_ticks = us_to_ticks_ceil(cruise_delay_us);
-    plan->wait_ticks = wait_counter_from_ticks(us_to_ticks_ceil(DIR_SETUP_US));
+    plan->wait_ticks = wait_counter_from_ticks(us_to_ticks_ceil(DIR_SETUP_US) + plan->start_delay_ticks);
     plan->active = true;
     return true;
 }
