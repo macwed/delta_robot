@@ -9,9 +9,9 @@ constexpr char kTag[] = "delta_ik";
 
 const DeltaConfig kDeltaConfig = {
     .r_base = 49.63f,
-    .r_effector = 120.51f,
-    .L1 = 110.95f,
-    .L2 = 164.76f,
+    .r_effector = 109.86f,
+    .L1 = 88.667f,
+    .L2 = 141.64f
 };
 
 float calc_arm_angle(const DeltaConfig& cfg,
@@ -51,9 +51,4 @@ bool delta_ik(const DeltaConfig& cfg, float x, float y, float z, float angles[3]
         }
     }
     return true;
-}
-
-int32_t angle_to_steps(float angle_rad)
-{
-    return lroundf(angle_rad * STEPS_PER_RAD);
 }

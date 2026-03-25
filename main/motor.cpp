@@ -16,18 +16,12 @@ constexpr char kTag[] = "motor";
 constexpr uint32_t kMotionNotifyTargetUpdate = 1U << 0;
 constexpr uint32_t kMotionNotifySegmentDone  = 1U << 1;
 
-constexpr uint8_t kMotorDirInvert[NUM_MOTORS] = {1, 1, 1};
+constexpr uint8_t kMotorDirInvert[NUM_MOTORS] = {0, 0, 0};
 constexpr gpio_num_t kMotorStepPins[NUM_MOTORS] = {
         MOTOR1_STEP, MOTOR2_STEP, MOTOR3_STEP
 };
 constexpr gpio_num_t kMotorDirPins[NUM_MOTORS] = {
         MOTOR1_DIR, MOTOR2_DIR, MOTOR3_DIR
-};
-constexpr gpio_num_t kMotorMs1Pins[NUM_MOTORS] = {
-        MOTOR1_MS1, MOTOR2_MS1, MOTOR3_MS1
-};
-constexpr gpio_num_t kMotorMs2Pins[NUM_MOTORS] = {
-        MOTOR1_MS2, MOTOR2_MS2, MOTOR3_MS2
 };
 
 struct MotionPlan {
@@ -35,6 +29,7 @@ struct MotionPlan {
     int32_t accumulators[NUM_MOTORS];
     int8_t dir_sign[NUM_MOTORS];
     int32_t max_steps;
+    int32_t ramp_count;
     int32_t step_index;
     uint32_t start_delay_ticks;
     uint32_t cruise_delay_ticks;
@@ -59,6 +54,19 @@ portMUX_TYPE s_motion_mux = portMUX_INITIALIZER_UNLOCKED;
 TaskHandle_t s_motion_task = nullptr;
 gptimer_handle_t s_motion_timer = nullptr;
 gpio_dev_t *const s_gpio_hw = GPIO_LL_GET_HW(0);
+int s_microsteps_per_step = DEFAULT_MICROSTEPS_PER_STEP;
+
+struct MotionProfileSettings {
+    int32_t fine_max_steps;
+    uint32_t fine_delay_us;
+    uint32_t fine_start_delay_us;
+    int32_t medium_max_steps;
+    uint32_t medium_delay_us;
+    uint32_t medium_start_delay_us;
+    uint32_t large_delay_us;
+    uint32_t large_start_delay_us;
+    int32_t ramp_count;
+};
 
 uint32_t us_to_ticks_ceil(uint32_t delay_us)
 {
@@ -95,19 +103,110 @@ uint32_t interpolate_delay(uint32_t start_delay_ticks, uint32_t cruise_delay_tic
     return start_delay_ticks - static_cast<uint32_t>((static_cast<uint64_t>(delta) * ease_q16) >> 16);
 }
 
+MotionProfileSettings motion_profile_for_microsteps(int microsteps_per_step)
+{
+    switch (microsteps_per_step) {
+        case 1:
+            return {
+                .fine_max_steps = 6,
+                .fine_delay_us = 5200,
+                .fine_start_delay_us = 8200,
+                .medium_max_steps = 24,
+                .medium_delay_us = 8200,
+                .medium_start_delay_us = 14500,
+                .large_delay_us = 12500,
+                .large_start_delay_us = 21000,
+                .ramp_count = 128,
+            };
+        case 2:
+            return {
+                .fine_max_steps = 12,
+                .fine_delay_us = 3000,
+                .fine_start_delay_us = 5000,
+                .medium_max_steps = 48,
+                .medium_delay_us = 4800,
+                .medium_start_delay_us = 8600,
+                .large_delay_us = 7600,
+                .large_start_delay_us = 13200,
+                .ramp_count = 104,
+            };
+        case 4:
+            return {
+                .fine_max_steps = 24,
+                .fine_delay_us = 1650,
+                .fine_start_delay_us = 2550,
+                .medium_max_steps = 96,
+                .medium_delay_us = 2750,
+                .medium_start_delay_us = 5000,
+                .large_delay_us = 4700,
+                .large_start_delay_us = 8600,
+                .ramp_count = 84,
+            };
+        case 8:
+            return {
+                .fine_max_steps = 48,
+                .fine_delay_us = 1300,
+                .fine_start_delay_us = 2300,
+                .medium_max_steps = 192,
+                .medium_delay_us = 2350,
+                .medium_start_delay_us = 4300,
+                .large_delay_us = 4200,
+                .large_start_delay_us = 7800,
+                .ramp_count = 108,
+            };
+        case 16:
+            return {
+                .fine_max_steps = 96,
+                .fine_delay_us = 1200,
+                .fine_start_delay_us = 2100,
+                .medium_max_steps = 384,
+                .medium_delay_us = 2200,
+                .medium_start_delay_us = 4100,
+                .large_delay_us = 4000,
+                .large_start_delay_us = 7600,
+                .ramp_count = 128,
+            };
+        case 32:
+            return {
+                .fine_max_steps = 192,
+                .fine_delay_us = 1150,
+                .fine_start_delay_us = 2000,
+                .medium_max_steps = 768,
+                .medium_delay_us = 2100,
+                .medium_start_delay_us = 3900,
+                .large_delay_us = 3900,
+                .large_start_delay_us = 7400,
+                .ramp_count = 160,
+            };
+        default:
+            return motion_profile_for_microsteps(DEFAULT_MICROSTEPS_PER_STEP);
+    }
+}
+
+float steps_per_rad_for_current_microsteps()
+{
+    return steps_per_rad_for_microsteps(s_microsteps_per_step);
+}
+
+int32_t angle_to_steps_for_microsteps(float angle_rad, int microsteps_per_step)
+{
+    return lroundf(angle_rad * steps_per_rad_for_microsteps(microsteps_per_step));
+}
+
 float steps_to_angle_rad(int32_t steps_from_home)
 {
-    return HOME_ANGLE_RAD + static_cast<float>(steps_from_home) / static_cast<float>(STEPS_PER_RAD);
+    return HOME_ANGLE_RAD + static_cast<float>(steps_from_home) / steps_per_rad_for_current_microsteps();
 }
 
 uint32_t step_delay_for_index(int32_t completed_steps, int32_t total_steps,
+                              int32_t ramp_count,
                               uint32_t start_delay_ticks, uint32_t cruise_delay_ticks)
 {
     if (total_steps <= 1) {
         return start_delay_ticks;
     }
 
-    const int32_t ramp_steps = std::max<int32_t>(1, std::min<int32_t>(STEP_RAMP_COUNT, total_steps / 2));
+    const int32_t ramp_steps = std::max<int32_t>(1, std::min<int32_t>(ramp_count, total_steps / 2));
     const int32_t phase_steps = std::min(completed_steps, total_steps - completed_steps);
     if (phase_steps >= ramp_steps) {
         return cruise_delay_ticks;
@@ -116,65 +215,6 @@ uint32_t step_delay_for_index(int32_t completed_steps, int32_t total_steps,
     return interpolate_delay(start_delay_ticks, cruise_delay_ticks,
                              smoothstep_q16(static_cast<uint32_t>(phase_steps),
                                             static_cast<uint32_t>(ramp_steps)));
-}
-
-void pulse_step_pins_blocking(const bool step_mask[NUM_MOTORS], uint32_t delay_us)
-{
-    bool any_step = false;
-    for (int i = 0; i < NUM_MOTORS; i++) {
-        if (!step_mask[i]) {
-            continue;
-        }
-        gpio_set_level(kMotorStepPins[i], 1);
-        any_step = true;
-    }
-
-    if (!any_step) {
-        esp_rom_delay_us(delay_us);
-        return;
-    }
-
-    esp_rom_delay_us(STEP_PULSE_HIGH_US);
-    for (int i = 0; i < NUM_MOTORS; i++) {
-        if (step_mask[i]) {
-            gpio_set_level(kMotorStepPins[i], 0);
-        }
-    }
-    esp_rom_delay_us(delay_us);
-}
-
-void move_motor_group_blocking(const int32_t signed_steps[NUM_MOTORS], uint32_t delay_us)
-{
-    int32_t abs_steps[NUM_MOTORS] = {0};
-    int32_t max_steps = 0;
-
-    for (int i = 0; i < NUM_MOTORS; i++) {
-        abs_steps[i] = std::abs(signed_steps[i]);
-        max_steps = std::max(max_steps, abs_steps[i]);
-
-        const int dir_level = (signed_steps[i] < 0 ? 1 : 0) ^ kMotorDirInvert[i];
-        gpio_set_level(kMotorDirPins[i], dir_level);
-    }
-
-    if (max_steps == 0) {
-        return;
-    }
-
-    esp_rom_delay_us(DIR_SETUP_US);
-
-    int32_t accumulators[NUM_MOTORS] = {0};
-    for (int32_t step_index = 0; step_index < max_steps; step_index++) {
-        bool step_mask[NUM_MOTORS] = {false, false, false};
-        for (int i = 0; i < NUM_MOTORS; i++) {
-            accumulators[i] += abs_steps[i];
-            if (accumulators[i] >= max_steps) {
-                accumulators[i] -= max_steps;
-                step_mask[i] = true;
-            }
-        }
-
-        pulse_step_pins_blocking(step_mask, delay_us);
-    }
 }
 
 void set_step_mask_level_ll(uint8_t step_mask, int level)
@@ -193,6 +233,55 @@ void set_dir_pins(const int8_t dir_sign[NUM_MOTORS])
         const int dir_level = (dir_sign[i] < 0 ? 1 : 0) ^ kMotorDirInvert[i];
         gpio_set_level(kMotorDirPins[i], dir_level);
     }
+}
+
+bool drv8825_levels_for_microsteps(int microsteps_per_step, int *mode0, int *mode1, int *mode2)
+{
+    switch (microsteps_per_step) {
+        case 1:
+            *mode0 = 0;
+            *mode1 = 0;
+            *mode2 = 0;
+            return true;
+        case 2:
+            *mode0 = 1;
+            *mode1 = 0;
+            *mode2 = 0;
+            return true;
+        case 4:
+            *mode0 = 0;
+            *mode1 = 1;
+            *mode2 = 0;
+            return true;
+        case 8:
+            *mode0 = 1;
+            *mode1 = 1;
+            *mode2 = 0;
+            return true;
+        case 16:
+            *mode0 = 0;
+            *mode1 = 0;
+            *mode2 = 1;
+            return true;
+        case 32:
+            *mode0 = 1;
+            *mode1 = 0;
+            *mode2 = 1;
+            return true;
+        default:
+            return false;
+    }
+}
+
+void log_drv8825_gpio_levels(int microsteps_per_step, int mode0, int mode1, int mode2)
+{
+    printf("DRV8825 microstep config: %d microsteps, M0=%d M1=%d M2=%d\n",
+           microsteps_per_step, mode0, mode1, mode2);
+    printf("DRV8825 GPIO levels: EN=%d M0=%d M1=%d M2=%d\n",
+           gpio_get_level(DRV8825_EN),
+           gpio_get_level(DRV8825_MODE0),
+           gpio_get_level(DRV8825_MODE1),
+           gpio_get_level(DRV8825_MODE2));
 }
 
 bool build_motion_plan(const int32_t current_steps[NUM_MOTORS],
@@ -214,14 +303,15 @@ bool build_motion_plan(const int32_t current_steps[NUM_MOTORS],
         return false;
     }
 
-    uint32_t start_delay_us = LARGE_MOVE_START_DELAY_US;
-    uint32_t cruise_delay_us = LARGE_MOVE_DELAY_US;
-    if (max_steps <= FINE_MOVE_MAX_STEPS) {
-        start_delay_us = FINE_MOVE_START_DELAY_US;
-        cruise_delay_us = FINE_MOVE_DELAY_US;
-    } else if (max_steps <= MEDIUM_MOVE_MAX_STEPS) {
-        start_delay_us = MEDIUM_MOVE_START_DELAY_US;
-        cruise_delay_us = MEDIUM_MOVE_DELAY_US;
+    const MotionProfileSettings profile = motion_profile_for_microsteps(s_microsteps_per_step);
+    uint32_t start_delay_us = profile.large_start_delay_us;
+    uint32_t cruise_delay_us = profile.large_delay_us;
+    if (max_steps <= profile.fine_max_steps) {
+        start_delay_us = profile.fine_start_delay_us;
+        cruise_delay_us = profile.fine_delay_us;
+    } else if (max_steps <= profile.medium_max_steps) {
+        start_delay_us = profile.medium_start_delay_us;
+        cruise_delay_us = profile.medium_delay_us;
     }
 
     std::memset(plan, 0, sizeof(*plan));
@@ -230,6 +320,7 @@ bool build_motion_plan(const int32_t current_steps[NUM_MOTORS],
         plan->dir_sign[i] = (signed_steps[i] > 0) ? 1 : (signed_steps[i] < 0 ? -1 : 0);
     }
     plan->max_steps = max_steps;
+    plan->ramp_count = profile.ramp_count;
     plan->start_delay_ticks = us_to_ticks_ceil(start_delay_us);
     plan->cruise_delay_ticks = us_to_ticks_ceil(cruise_delay_us);
     plan->wait_ticks = wait_counter_from_ticks(us_to_ticks_ceil(DIR_SETUP_US) + plan->start_delay_ticks);
@@ -286,7 +377,8 @@ bool IRAM_ATTR motion_timer_on_alarm(gptimer_handle_t timer,
             xTaskNotifyFromISR(s_motion_task, kMotionNotifySegmentDone, eSetBits, &high_task_woken);
         } else {
             const uint32_t delay_ticks = step_delay_for_index(
-                    plan.step_index, plan.max_steps, plan.start_delay_ticks, plan.cruise_delay_ticks);
+                    plan.step_index, plan.max_steps, plan.ramp_count,
+                    plan.start_delay_ticks, plan.cruise_delay_ticks);
             plan.wait_ticks = wait_counter_from_ticks(delay_ticks);
         }
 
@@ -395,33 +487,64 @@ void motor_configure_microstep_pins()
 {
     gpio_config_t io_conf = {};
     io_conf.pin_bit_mask =
-            (1ULL << MOTOR1_MS1) | (1ULL << MOTOR1_MS2) |
-            (1ULL << MOTOR2_MS1) | (1ULL << MOTOR2_MS2) |
-            (1ULL << MOTOR3_MS1) | (1ULL << MOTOR3_MS2);
+            gpio_mask(DRV8825_MODE0) |
+            gpio_mask(DRV8825_MODE1) |
+            gpio_mask(DRV8825_MODE2);
     io_conf.mode = GPIO_MODE_OUTPUT;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io_conf.intr_type = GPIO_INTR_DISABLE;
     gpio_config(&io_conf);
-
-    for (int i = 0; i < NUM_MOTORS; i++) {
-        gpio_set_level(kMotorMs1Pins[i], kMicrostepCfgMs1);
-        gpio_set_level(kMotorMs2Pins[i], kMicrostepCfgMs2);
-    }
-
-    printf("Microstep config: %ld microsteps, MS1=%d MS2=%d\n",
-           (long)MICROSTEPS_PER_STEP, kMicrostepCfgMs1, kMicrostepCfgMs2);
+    gpio_input_enable(DRV8825_MODE0);
+    gpio_input_enable(DRV8825_MODE1);
+    gpio_input_enable(DRV8825_MODE2);
+    motor_set_microsteps(DEFAULT_MICROSTEPS_PER_STEP);
 }
 
-void motor_home_reseat_all()
+bool motor_set_microsteps(int microsteps_per_step)
 {
-    const int32_t home_steps[NUM_MOTORS] = {
-            -HOME_RESEAT_STEPS,
-            -HOME_RESEAT_STEPS,
-            -HOME_RESEAT_STEPS
-    };
-    printf("Home reseat: %ld steps\n", (long)HOME_RESEAT_STEPS);
-    move_motor_group_blocking(home_steps, HOME_RESEAT_DELAY_US);
+    int mode0 = 0;
+    int mode1 = 0;
+    int mode2 = 0;
+    if (!drv8825_levels_for_microsteps(microsteps_per_step, &mode0, &mode1, &mode2)) {
+        return false;
+    }
+
+    float current_angle_offsets[NUM_MOTORS] = {0.f};
+    float target_angle_offsets[NUM_MOTORS] = {0.f};
+
+    portENTER_CRITICAL(&s_motion_mux);
+    if (s_motion_state.plan.active) {
+        portEXIT_CRITICAL(&s_motion_mux);
+        return false;
+    }
+
+    const float old_steps_per_rad = steps_per_rad_for_current_microsteps();
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        current_angle_offsets[i] = static_cast<float>(s_motion_state.current_steps[i]) / old_steps_per_rad;
+        target_angle_offsets[i] = static_cast<float>(s_motion_state.target_steps[i]) / old_steps_per_rad;
+    }
+
+    s_microsteps_per_step = microsteps_per_step;
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        s_motion_state.current_steps[i] = angle_to_steps_for_microsteps(current_angle_offsets[i], microsteps_per_step);
+        s_motion_state.target_steps[i] = angle_to_steps_for_microsteps(target_angle_offsets[i], microsteps_per_step);
+    }
+    portEXIT_CRITICAL(&s_motion_mux);
+
+    gpio_set_level(DRV8825_MODE0, mode0);
+    gpio_set_level(DRV8825_MODE1, mode1);
+    gpio_set_level(DRV8825_MODE2, mode2);
+    log_drv8825_gpio_levels(microsteps_per_step, mode0, mode1, mode2);
+    return true;
+}
+
+int motor_get_microsteps()
+{
+    portENTER_CRITICAL(&s_motion_mux);
+    const int microsteps_per_step = s_microsteps_per_step;
+    portEXIT_CRITICAL(&s_motion_mux);
+    return microsteps_per_step;
 }
 
 void motor_init_motion_engine()
@@ -468,9 +591,10 @@ void motor_init_motion_engine()
 void motor_set_target_angles(const float target_angles[NUM_MOTORS])
 {
     int32_t target_steps[NUM_MOTORS] = {0};
+    const int microsteps_per_step = motor_get_microsteps();
     for (int i = 0; i < NUM_MOTORS; i++) {
         const float clamped_angle = std::clamp(target_angles[i], HOME_ANGLE_RAD, MAX_ANGLE_RAD);
-        target_steps[i] = angle_to_steps(clamped_angle - HOME_ANGLE_RAD);
+        target_steps[i] = angle_to_steps_for_microsteps(clamped_angle - HOME_ANGLE_RAD, microsteps_per_step);
     }
 
     bool changed = false;
