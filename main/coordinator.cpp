@@ -10,16 +10,90 @@
 #include "motor.hpp"
 
 namespace {
+constexpr float kDefaultManualTarget[3] = {0.f, 0.f, 0.f};
+constexpr float kLegacyLowPoseZMm = 140.f;
+constexpr float kLegacyHighPoseZMm = 210.f;
+
 struct CoordinatorControl {
     float manual_xyz[3];
     bool demo_mode;
 };
 
 CoordinatorControl s_control = {
-    .manual_xyz = {0.f, 0.f, 140.f},
+    .manual_xyz = {kDefaultManualTarget[0], kDefaultManualTarget[1], kDefaultManualTarget[2]},
     .demo_mode = false,
 };
 portMUX_TYPE s_control_mux = portMUX_INITIALIZER_UNLOCKED;
+
+float center_angle_for_z(float z_mm)
+{
+    return calc_arm_angle(kDeltaConfig, 0.f, 0.f, z_mm, 0);
+}
+
+float compute_home_height_mm()
+{
+    constexpr float kTargetAngle = HOME_ANGLE_RAD;
+    constexpr float kSearchMinZ = 0.f;
+    constexpr float kSearchMaxZ = 400.f;
+    constexpr float kSearchStepZ = 1.f;
+
+    float prev_z = kSearchMinZ;
+    float prev_angle = center_angle_for_z(prev_z);
+    if (!std::isfinite(prev_angle)) {
+        prev_angle = NAN;
+    }
+
+    for (float z = kSearchMinZ + kSearchStepZ; z <= kSearchMaxZ; z += kSearchStepZ) {
+        const float angle = center_angle_for_z(z);
+        if (!std::isfinite(angle) || !std::isfinite(prev_angle)) {
+            prev_z = z;
+            prev_angle = angle;
+            continue;
+        }
+
+        const float prev_error = prev_angle - kTargetAngle;
+        const float error = angle - kTargetAngle;
+        if ((prev_error <= 0.f && error >= 0.f) || (prev_error >= 0.f && error <= 0.f)) {
+            float lo = prev_z;
+            float hi = z;
+            float lo_error = prev_error;
+
+            for (int i = 0; i < 24; i++) {
+                const float mid = 0.5f * (lo + hi);
+                const float mid_angle = center_angle_for_z(mid);
+                if (!std::isfinite(mid_angle)) {
+                    break;
+                }
+
+                const float mid_error = mid_angle - kTargetAngle;
+                if ((lo_error <= 0.f && mid_error >= 0.f) || (lo_error >= 0.f && mid_error <= 0.f)) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                    lo_error = mid_error;
+                }
+            }
+
+            return 0.5f * (lo + hi);
+        }
+
+        prev_z = z;
+        prev_angle = angle;
+    }
+
+    return 80.f;
+}
+
+float home_height_mm()
+{
+    static const float kHomeHeightMm = compute_home_height_mm();
+    return kHomeHeightMm;
+}
+
+float machine_z_from_home_relative(float z_from_home_mm)
+{
+    return home_height_mm() + z_from_home_mm;
+}
 
 void set_manual_xyz(float x, float y, float z)
 {
@@ -49,14 +123,15 @@ CoordinatorControl snapshot_control()
 
 bool validate_xyz(float x, float y, float z, float angles[NUM_MOTORS])
 {
-    return delta_ik(kDeltaConfig, x, y, z, angles);
+    return delta_ik(kDeltaConfig, x, y, machine_z_from_home_relative(z), angles);
 }
 
 void print_help()
 {
     printf(
         "\nCommands:\n"
-        "  xyz <x> <y> <z>  set manual target in mm\n"
+        "  xyz <x> <y> <z>  set manual target in mm relative to HOME\n"
+        "  ms <1|2|4|8|16|32>  change DRV8825 microstep mode\n"
         "  demo on          enable demo motion\n"
         "  demo off         disable demo motion and hold manual target\n"
         "  status           print current mode and arm angles\n"
@@ -71,8 +146,10 @@ void print_status()
     motor_get_current_angles(current_angles);
 
     printf("Mode: %s\n", control.demo_mode ? "demo" : "manual");
-    printf("Manual XYZ: %.1f %.1f %.1f mm\n",
+    printf("Manual XYZ (home-relative): %.1f %.1f %.1f mm\n",
            control.manual_xyz[0], control.manual_xyz[1], control.manual_xyz[2]);
+    printf("Home height: %.1f mm above motor plane\n", home_height_mm());
+    printf("Microsteps: %d\n", motor_get_microsteps());
     printf("Arm angles: %.2f %.2f %.2f deg\n",
            current_angles[0] * 180.f / M_PI,
            current_angles[1] * 180.f / M_PI,
@@ -95,6 +172,7 @@ void handle_console_line(char *line)
     float x = 0.f;
     float y = 0.f;
     float z = 0.f;
+    int microsteps = 0;
     char extra = '\0';
     if (std::sscanf(line, "xyz %f %f %f %c", &x, &y, &z, &extra) == 3) {
         float angles[NUM_MOTORS] = {0.f};
@@ -105,11 +183,24 @@ void handle_console_line(char *line)
         }
 
         set_manual_xyz(x, y, z);
-        printf("Manual target set: %.1f %.1f %.1f mm\n", x, y, z);
+        printf("Manual target set (home-relative): %.1f %.1f %.1f mm\n", x, y, z);
+        printf("Machine Z: %.1f mm\n", machine_z_from_home_relative(z));
         printf("Arm target: %.2f %.2f %.2f deg\n",
                angles[0] * 180.f / M_PI,
                angles[1] * 180.f / M_PI,
                angles[2] * 180.f / M_PI);
+        fflush(stdout);
+        return;
+    }
+
+    if (std::sscanf(line, "ms %d %c", &microsteps, &extra) == 1) {
+        if (!motor_set_microsteps(microsteps)) {
+            printf("Microstep change failed. Use 1, 2, 4, 8, 16 or 32 while the robot is idle.\n");
+            fflush(stdout);
+            return;
+        }
+
+        printf("Microstep mode set to %d\n", microsteps);
         fflush(stdout);
         return;
     }
@@ -165,13 +256,13 @@ void coordinator_task(void *p)
             }
 
             ok = high_pose
-                 ? delta_ik(kDeltaConfig, 20, 0, 210.f, angles)
-                 : delta_ik(kDeltaConfig, 0, 0, 140.f, angles);
+                 ? delta_ik(kDeltaConfig, 20, 0, machine_z_from_home_relative(kLegacyHighPoseZMm - home_height_mm()), angles)
+                 : delta_ik(kDeltaConfig, 0, 0, machine_z_from_home_relative(kLegacyLowPoseZMm - home_height_mm()), angles);
         } else {
             ok = delta_ik(kDeltaConfig,
                           control.manual_xyz[0],
                           control.manual_xyz[1],
-                          control.manual_xyz[2],
+                          machine_z_from_home_relative(control.manual_xyz[2]),
                           angles);
         }
 
