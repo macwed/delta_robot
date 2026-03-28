@@ -9,6 +9,9 @@ struct DeltaConfig {
 };
 
 constexpr float DEG_TO_RAD = M_PI / 180.0f;
+// Hardware: DRV8825 MODE0 pin does not reliably drive HIGH, so the driver
+// stays at 1/4 step regardless of the firmware ms setting.  Keep firmware
+// at ms=4 so step counts match the physical hardware.
 constexpr int32_t DEFAULT_MICROSTEPS_PER_STEP = 4;
 constexpr int32_t STEPS_PER_REVOLUTION = 200;
 

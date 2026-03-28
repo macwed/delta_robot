@@ -103,84 +103,49 @@ uint32_t interpolate_delay(uint32_t start_delay_ticks, uint32_t cruise_delay_tic
     return start_delay_ticks - static_cast<uint32_t>((static_cast<uint64_t>(delta) * ease_q16) >> 16);
 }
 
+// Base motion profile calibrated for kBaseProfileMs microsteps.
+// All other microstep counts are derived by scaling:
+//   - step thresholds scale up proportionally (more steps for same angular move)
+//   - delays scale down proportionally (same angular velocity = shorter inter-step time)
+constexpr int kBaseProfileMs = 4;
+constexpr MotionProfileSettings kBaseProfile = {
+    // Calibrated for ms=4 hardware (1/4-step).
+    // Delays are set to match the step rate that ms=8 scaling previously
+    // produced (ms=8 at 15000µs → 7500µs per step after 4/8 scaling).
+    // fine: tiny PID corrections.  start == cruise → no ramp, no restart
+    // jerk when coordinator replans mid-move.  ~33 full-steps/sec < NEMA17
+    // resonance zone.
+    .fine_max_steps      = 12,
+    .fine_delay_us       = 20000,
+    .fine_start_delay_us = 20000,
+    // medium: moderate moves with S-curve ramp.
+    .medium_max_steps      = 72,
+    .medium_delay_us       = 2500,
+    .medium_start_delay_us = 7500,
+    // large: big repositions — fast cruise, long ramp.
+    .large_delay_us       = 1250,
+    .large_start_delay_us = 7500,
+    .ramp_count = 160,
+};
+
 MotionProfileSettings motion_profile_for_microsteps(int microsteps_per_step)
 {
-    switch (microsteps_per_step) {
-        case 1:
-            return {
-                .fine_max_steps = 6,
-                .fine_delay_us = 5200,
-                .fine_start_delay_us = 8200,
-                .medium_max_steps = 24,
-                .medium_delay_us = 8200,
-                .medium_start_delay_us = 14500,
-                .large_delay_us = 12500,
-                .large_start_delay_us = 21000,
-                .ramp_count = 128,
-            };
-        case 2:
-            return {
-                .fine_max_steps = 12,
-                .fine_delay_us = 3000,
-                .fine_start_delay_us = 5000,
-                .medium_max_steps = 48,
-                .medium_delay_us = 4800,
-                .medium_start_delay_us = 8600,
-                .large_delay_us = 7600,
-                .large_start_delay_us = 13200,
-                .ramp_count = 104,
-            };
-        case 4:
-            return {
-                .fine_max_steps = 24,
-                .fine_delay_us = 1650,
-                .fine_start_delay_us = 2550,
-                .medium_max_steps = 96,
-                .medium_delay_us = 2750,
-                .medium_start_delay_us = 5000,
-                .large_delay_us = 4700,
-                .large_start_delay_us = 8600,
-                .ramp_count = 84,
-            };
-        case 8:
-            return {
-                .fine_max_steps = 48,
-                .fine_delay_us = 1300,
-                .fine_start_delay_us = 2300,
-                .medium_max_steps = 192,
-                .medium_delay_us = 2350,
-                .medium_start_delay_us = 4300,
-                .large_delay_us = 4200,
-                .large_start_delay_us = 7800,
-                .ramp_count = 108,
-            };
-        case 16:
-            return {
-                .fine_max_steps = 96,
-                .fine_delay_us = 1200,
-                .fine_start_delay_us = 2100,
-                .medium_max_steps = 384,
-                .medium_delay_us = 2200,
-                .medium_start_delay_us = 4100,
-                .large_delay_us = 4000,
-                .large_start_delay_us = 7600,
-                .ramp_count = 128,
-            };
-        case 32:
-            return {
-                .fine_max_steps = 192,
-                .fine_delay_us = 1150,
-                .fine_start_delay_us = 2000,
-                .medium_max_steps = 768,
-                .medium_delay_us = 2100,
-                .medium_start_delay_us = 3900,
-                .large_delay_us = 3900,
-                .large_start_delay_us = 7400,
-                .ramp_count = 160,
-            };
-        default:
-            return motion_profile_for_microsteps(DEFAULT_MICROSTEPS_PER_STEP);
+    if (microsteps_per_step <= 0) {
+        return kBaseProfile;
     }
+    const int s = microsteps_per_step;
+    const int b = kBaseProfileMs;
+    return {
+        .fine_max_steps        = kBaseProfile.fine_max_steps   * s / b,
+        .fine_delay_us         = kBaseProfile.fine_delay_us    * b / s,
+        .fine_start_delay_us   = kBaseProfile.fine_start_delay_us * b / s,
+        .medium_max_steps      = kBaseProfile.medium_max_steps * s / b,
+        .medium_delay_us       = kBaseProfile.medium_delay_us  * b / s,
+        .medium_start_delay_us = kBaseProfile.medium_start_delay_us * b / s,
+        .large_delay_us        = kBaseProfile.large_delay_us   * b / s,
+        .large_start_delay_us  = kBaseProfile.large_start_delay_us  * b / s,
+        .ramp_count            = kBaseProfile.ramp_count,
+    };
 }
 
 float steps_per_rad_for_current_microsteps()
