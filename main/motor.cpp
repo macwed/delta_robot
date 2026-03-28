@@ -615,6 +615,38 @@ void motor_set_target_angles(const float target_angles[NUM_MOTORS])
     }
 }
 
+void motor_reset()
+{
+    // Abort any active plan so the ISR stops stepping.
+    portENTER_CRITICAL(&s_motion_mux);
+    s_motion_state.plan.active = false;
+    portEXIT_CRITICAL(&s_motion_mux);
+
+    // Disable drivers — arms fall back to HOME under gravity.
+    gpio_set_level(DRV8825_EN, 1);
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    // Arms are at HOME (step offset 0). Reset tracking before re-enabling.
+    portENTER_CRITICAL(&s_motion_mux);
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        s_motion_state.current_steps[i] = 0;
+        s_motion_state.target_steps[i]  = 0;
+    }
+    s_motion_state.plan = {};
+    portEXIT_CRITICAL(&s_motion_mux);
+
+    gpio_set_level(DRV8825_EN, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+bool motor_is_idle()
+{
+    portENTER_CRITICAL(&s_motion_mux);
+    const bool idle = !s_motion_state.plan.active;
+    portEXIT_CRITICAL(&s_motion_mux);
+    return idle;
+}
+
 void motor_get_current_angles(float current_angles[NUM_MOTORS])
 {
     int32_t current_steps[NUM_MOTORS] = {0};
@@ -627,4 +659,20 @@ void motor_get_current_angles(float current_angles[NUM_MOTORS])
     for (int i = 0; i < NUM_MOTORS; i++) {
         current_angles[i] = steps_to_angle_rad(current_steps[i]);
     }
+}
+
+void motor_print_motion_profile()
+{
+    const int ms = motor_get_microsteps();
+    const MotionProfileSettings p = motion_profile_for_microsteps(ms);
+    printf("--- Motion profile (ms=%d, base=%d) ---\n", ms, kBaseProfileMs);
+    printf("  fine  : max=%ld steps  cruise=%lu us  start=%lu us\n",
+           (long)p.fine_max_steps, (unsigned long)p.fine_delay_us, (unsigned long)p.fine_start_delay_us);
+    printf("  medium: max=%ld steps  cruise=%lu us  start=%lu us\n",
+           (long)p.medium_max_steps, (unsigned long)p.medium_delay_us, (unsigned long)p.medium_start_delay_us);
+    printf("  large :             cruise=%lu us  start=%lu us\n",
+           (unsigned long)p.large_delay_us, (unsigned long)p.large_start_delay_us);
+    printf("  ramp_count=%ld steps  tick=%lu us\n",
+           (long)p.ramp_count, (unsigned long)MOTION_TICK_US);
+    fflush(stdout);
 }

@@ -4,9 +4,11 @@ idf_component_register(
         "motor.cpp"
         "delta_ik.cpp"
         "coordinator.cpp"
+        "rpi_uart.cpp"
     REQUIRES
         esp_driver_gptimer
         esp_driver_gpio
+        esp_driver_uart
     PRIV_REQUIRES
         hal
     INCLUDE_DIRS

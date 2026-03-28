@@ -1,6 +1,7 @@
 #include "coordinator.hpp"
 #include "motor.hpp"
 #include "delta_ik.hpp"
+#include "rpi_uart.hpp"
 
 extern "C" void app_main(void)
 {
@@ -44,4 +45,5 @@ extern "C" void app_main(void)
     motor_init_motion_engine();
     xTaskCreate(coordinator_task, "coordinator", 4096, NULL, 2, NULL);
     xTaskCreate(coordinator_console_task, "console", 4096, NULL, 1, NULL);
+    xTaskCreate(rpi_uart_task, "rpi_uart", 4096, NULL, 1, NULL);
 }

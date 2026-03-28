@@ -35,11 +35,14 @@ constexpr uint32_t MOTION_TICK_US = 50;
 constexpr uint32_t STEP_PULSE_HIGH_TICKS =
         (STEP_PULSE_HIGH_US + MOTION_TICK_US - 1) / MOTION_TICK_US;
 constexpr uint32_t DIR_SETUP_US = 50;
-constexpr TickType_t COORDINATOR_PERIOD_TICKS = pdMS_TO_TICKS(10);
+constexpr TickType_t COORDINATOR_PERIOD_TICKS = pdMS_TO_TICKS(20);
 
 void motor_configure_microstep_pins();
 bool motor_set_microsteps(int microsteps_per_step);
 int motor_get_microsteps();
+void motor_print_motion_profile();
 void motor_init_motion_engine();
+void motor_reset();
+bool motor_is_idle();
 void motor_set_target_angles(const float target_angles[NUM_MOTORS]);
 void motor_get_current_angles(float current_angles[NUM_MOTORS]);

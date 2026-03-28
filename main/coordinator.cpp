@@ -17,6 +17,7 @@ constexpr float kLegacyHighPoseZMm = 210.f;
 struct CoordinatorControl {
     float manual_xyz[3];
     bool demo_mode;
+    bool paused;  // set by console diag commands to suppress coordinator output
 };
 
 CoordinatorControl s_control = {
@@ -126,12 +127,108 @@ bool validate_xyz(float x, float y, float z, float angles[NUM_MOTORS])
     return delta_ik(kDeltaConfig, x, y, machine_z_from_home_relative(z), angles);
 }
 
+// Block until motion engine is idle or timeout_ms elapses.
+// Adds a short settle delay at the end.
+void wait_for_idle(uint32_t timeout_ms)
+{
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(timeout_ms);
+    while (!motor_is_idle()) {
+        if (xTaskGetTickCount() >= deadline) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    vTaskDelay(pdMS_TO_TICKS(150));
+}
+
+void set_paused(bool paused)
+{
+    portENTER_CRITICAL(&s_control_mux);
+    s_control.paused = paused;
+    portEXIT_CRITICAL(&s_control_mux);
+}
+
+// Move each motor individually by +20° and back so the user can identify
+// physical arm order.  Coordinator is paused during the test.
+void run_diag()
+{
+    set_paused(true);
+    vTaskDelay(pdMS_TO_TICKS(30));  // let coordinator_task see the flag
+    wait_for_idle(3000);
+
+    float base_angles[NUM_MOTORS];
+    motor_get_current_angles(base_angles);
+    const float delta_rad = 20.f * DEG_TO_RAD;
+
+    printf("\n--- DIAG: individual motor test ---\n");
+    printf("Watch which physical arm moves and note its number.\n\n");
+    fflush(stdout);
+
+    for (int i = 0; i < NUM_MOTORS; i++) {
+        printf("Motor %d moving UP\n", i + 1);
+        fflush(stdout);
+
+        float up[NUM_MOTORS];
+        for (int j = 0; j < NUM_MOTORS; j++) up[j] = base_angles[j];
+        up[i] = base_angles[i] + delta_rad;
+        motor_set_target_angles(up);
+        wait_for_idle(3000);
+
+        printf("Motor %d moving DOWN\n", i + 1);
+        fflush(stdout);
+        motor_set_target_angles(base_angles);
+        wait_for_idle(3000);
+
+        if (i < NUM_MOTORS - 1) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+    }
+
+    set_paused(false);
+    printf("--- DIAG complete ---\n\n");
+    fflush(stdout);
+}
+
+// Move effector along ±X and ±Y axes at z=45mm so the user can verify
+// direction mapping.
+void run_dirtest()
+{
+    constexpr float kZ = 45.f;
+    constexpr float kOffset = 20.f;
+
+    printf("\n--- DIRTEST: axis direction test (z=%.0fmm) ---\n\n", kZ);
+    fflush(stdout);
+
+    struct { float x; float y; const char *label; } steps[] = {
+        {  kOffset, 0.f,      "Moving X positive (+20, 0)" },
+        { -kOffset, 0.f,      "Moving X negative (-20, 0)" },
+        { 0.f,  kOffset,      "Moving Y positive (0, +20)" },
+        { 0.f, -kOffset,      "Moving Y negative (0, -20)" },
+        { 0.f,  0.f,          "Returning to center (0, 0)" },
+    };
+
+    for (const auto &step : steps) {
+        printf("%s\n", step.label);
+        fflush(stdout);
+        set_manual_xyz(step.x, step.y, kZ);
+        wait_for_idle(4000);
+        vTaskDelay(pdMS_TO_TICKS(1500));
+    }
+
+    printf("--- DIRTEST complete ---\n\n");
+    fflush(stdout);
+}
+
 void print_help()
 {
     printf(
         "\nCommands:\n"
         "  xyz <x> <y> <z>  set manual target in mm relative to HOME\n"
         "  ms <1|2|4|8|16|32>  change DRV8825 microstep mode\n"
+        "  tune             print current motion profile (ramp thresholds and delays)\n"
+        "  reset            disable drivers 2s (arms fall to HOME), re-enable\n"
+        "  diag             move each motor +20deg individually to identify arm order\n"
+        "  dirtest          move effector ±X and ±Y to verify axis directions\n"
         "  demo on          enable demo motion\n"
         "  demo off         disable demo motion and hold manual target\n"
         "  status           print current mode and arm angles\n"
@@ -219,6 +316,37 @@ void handle_console_line(char *line)
         return;
     }
 
+    if (std::strcmp(line, "tune") == 0) {
+        motor_print_motion_profile();
+        return;
+    }
+
+    if (std::strcmp(line, "reset") == 0) {
+        printf("Resetting: disabling drivers for 2s, arms return to HOME.\n");
+        fflush(stdout);
+        set_paused(true);
+        motor_reset();
+        portENTER_CRITICAL(&s_control_mux);
+        s_control.manual_xyz[0] = 0.f;
+        s_control.manual_xyz[1] = 0.f;
+        s_control.manual_xyz[2] = 0.f;
+        portEXIT_CRITICAL(&s_control_mux);
+        set_paused(false);
+        printf("Reset complete. At HOME.\n");
+        fflush(stdout);
+        return;
+    }
+
+    if (std::strcmp(line, "diag") == 0) {
+        run_diag();
+        return;
+    }
+
+    if (std::strcmp(line, "dirtest") == 0) {
+        run_dirtest();
+        return;
+    }
+
     if (std::strcmp(line, "status") == 0) {
         print_status();
         return;
@@ -233,6 +361,16 @@ void handle_console_line(char *line)
     print_help();
 }
 } // namespace
+
+bool coordinator_set_manual_xyz(float x, float y, float z)
+{
+    float angles[NUM_MOTORS];
+    if (!validate_xyz(x, y, z, angles)) {
+        return false;
+    }
+    set_manual_xyz(x, y, z);
+    return true;
+}
 
 void coordinator_task(void *p)
 {
@@ -266,7 +404,10 @@ void coordinator_task(void *p)
                           angles);
         }
 
-        if (ok) {
+        // motor_set_target_angles internally checks whether the target
+        // actually changed, so calling it every cycle is safe — replanning
+        // only happens when the XYZ target differs from the previous one.
+        if (ok && !control.paused) {
             motor_set_target_angles(angles);
         }
 
